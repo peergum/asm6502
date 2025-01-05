@@ -112,18 +112,6 @@ disLoop:
 			valueSet = true
 		}
 
-		//label := 1
-		//if jump, err := regexp.MatchString("B..|JMP|JSR", code); err == nil && jump {
-		//	addrCnt++
-		//	label = fmt.Sprintf("l_%04x", addr)
-		//} else if mode != 0 && mode != 4 && mode != 5 && mode != 13 {
-		//	memCnt++
-		//	if mode >= 10 && mode <= 12 {
-		//		label = fmt.Sprintf("m_%02x", memCnt)
-		//	} else {
-		//		label = fmt.Sprintf("m_%04x", memCnt)
-		//	}
-		//}
 		var dis string
 		switch iType {
 		case "A":
@@ -167,6 +155,9 @@ disLoop:
 			}
 		}
 		lines = append(lines, Line{addr, codes, dis, value})
+		if code == "RTS" || code == "RTI" || code == "JMP" {
+			lines = append(lines, Line{addr, "", "", 0})
+		}
 		if valueSet {
 			if iType == "rel" {
 				i := sort.SearchInts(rels, value)
@@ -217,6 +208,10 @@ disLoop:
 	fmt.Printf("%04X:\n", lAddr)
 
 	for _, line := range lines {
+		if line.dis == "" {
+			fmt.Println()
+			continue
+		}
 		re1 := regexp.MustCompile(`{([0-9A-F][0-9A-F][0-9A-F][0-9A-F])}`)
 		re2 := regexp.MustCompile(`{([0-9A-F][0-9A-F])}`)
 		dis := re1.ReplaceAllString(line.dis, labels[fmt.Sprintf("%04X", line.value)])
