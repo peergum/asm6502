@@ -34,10 +34,12 @@ type Labels map[string]string
 var labels = make(Labels)
 
 type Line struct {
-	addr  int
-	codes string
-	dis   string
-	value int
+	addr     int
+	codes    string
+	dis      string
+	value    int
+	comment1 string
+	comment2 string
 }
 
 func disassemble(srcName string, lAddr int) {
@@ -113,50 +115,73 @@ disLoop:
 		}
 
 		var dis string
+		var comment1 string
+		var comment2 string
+
+		sCodes := ""
+		for i := range 3 {
+			if i < iLen {
+				sCodes += fmt.Sprintf(" %02X", b[i])
+				//if b[i]&0x7f < 32 {
+				//	comment2 += "."
+				//} else if b[i]&0x80 == 0 {
+				//	comment2 += string(b[i])
+				//} else {
+				//	comment2 += "[" + string(b[i]&0x7f) + "]"
+				//}
+			} else {
+				sCodes += "   "
+			}
+		}
+
 		switch iType {
 		case "A":
 			dis = fmt.Sprintf("%s A", code)
 		case "#":
 			dis = fmt.Sprintf("%s #$%02X", code, value)
+			comment1 = fmt.Sprintf("%02X", value)
 		case "abs":
-			dis = fmt.Sprintf("%s $%04X\t; {%04X}", code, value, value)
+			dis = fmt.Sprintf("%s $%04X", code, value)
+			comment1 = fmt.Sprintf("%04X", value)
 		case "abs,X":
-			dis = fmt.Sprintf("%s $%04X,X\t; {%04X}", code, value, value)
+			dis = fmt.Sprintf("%s $%04X,X", code, value)
+			comment1 = fmt.Sprintf("%04X", value)
 		case "abs,Y":
-			dis = fmt.Sprintf("%s $%04X,Y\t; {%04X}", code, value, value)
+			dis = fmt.Sprintf("%s $%04X,Y", code, value)
+			comment1 = fmt.Sprintf("%04X", value)
 		case "zpg":
-			dis = fmt.Sprintf("%s $%02X\t; {%02X}", code, value, value)
+			dis = fmt.Sprintf("%s $%02X", code, value)
+			comment1 = fmt.Sprintf("%02X", value)
 		case "zpg,X":
-			dis = fmt.Sprintf("%s $%02X,X\t; {%02X}", code, value, value)
+			dis = fmt.Sprintf("%s $%02X,X", code, value)
+			comment1 = fmt.Sprintf("%02X", value)
 		case "zpg,Y":
-			dis = fmt.Sprintf("%s $%02X,Y\t; {%02X}", code, value, value)
+			dis = fmt.Sprintf("%s $%02X,Y", code, value)
+			comment1 = fmt.Sprintf("%02X", value)
 		case "(ind)":
-			dis = fmt.Sprintf("%s ($%04X)\t; {%04X}", code, value, value)
+			dis = fmt.Sprintf("%s ($%04X)", code, value)
+			comment1 = fmt.Sprintf("%04X", value)
 		case "(ind,X)":
-			dis = fmt.Sprintf("%s ($%04X,X)\t; {%04X}", code, value, value)
+			dis = fmt.Sprintf("%s ($%04X,X)", code, value)
+			comment1 = fmt.Sprintf("%04X", value)
 		case "(ind),Y":
-			dis = fmt.Sprintf("%s ($%04X),Y\t; {%04X}", code, value, value)
+			dis = fmt.Sprintf("%s ($%04X),Y", code, value)
+			comment1 = fmt.Sprintf("%04X", value)
 		case "rel":
 			v := int8(value)
 			rel := uint16(int16(addr+iLen) + int16(v))
 			value = int(rel)
-			dis = fmt.Sprintf("%s {%04X}", code, value)
+			dis = fmt.Sprintf("%s $%04X", code, value)
+			comment1 = fmt.Sprintf("%04X", value)
 		case "ill":
 			dis = "???"
 		default:
 			dis = code
 		}
-		codes := ""
-		for i := range 3 {
-			if i < iLen {
-				codes += fmt.Sprintf(" %02X", b[i])
-			} else {
-				codes += "   "
-			}
-		}
-		lines = append(lines, Line{addr, codes, dis, value})
+
+		lines = append(lines, Line{addr, sCodes, dis, value, comment1, comment2})
 		if code == "RTS" || code == "RTI" || code == "JMP" {
-			lines = append(lines, Line{addr, "", "", 0})
+			lines = append(lines, Line{addr, "", "", 0, "", ""})
 		}
 		if valueSet {
 			if iType == "rel" {
@@ -212,12 +237,12 @@ disLoop:
 			fmt.Println()
 			continue
 		}
-		re1 := regexp.MustCompile(`{([0-9A-F][0-9A-F][0-9A-F][0-9A-F])}`)
-		re2 := regexp.MustCompile(`{([0-9A-F][0-9A-F])}`)
-		dis := re1.ReplaceAllString(line.dis, labels[fmt.Sprintf("%04X", line.value)])
-		dis = re2.ReplaceAllString(dis, labels[fmt.Sprintf("%02X", line.value)])
+		re1 := regexp.MustCompile(`^([0-9A-F][0-9A-F][0-9A-F][0-9A-F])$`)
+		re2 := regexp.MustCompile(`^([0-9A-F][0-9A-F])$`)
+		comment1 := re1.ReplaceAllString(line.comment1, labels[fmt.Sprintf("%04X", line.value)])
+		comment1 = re2.ReplaceAllString(comment1, labels[fmt.Sprintf("%02X", line.value)])
 		label := labels[fmt.Sprintf("%04X", line.addr)]
-		fmt.Printf("%04X: %-10s %-8s %s\n", line.addr, line.codes, label, dis)
+		fmt.Printf("%04X: %-10s %-8s %-15s ; %-15s   %-3s\n", line.addr, line.codes, label, line.dis, comment1, line.comment2)
 	}
 }
 
