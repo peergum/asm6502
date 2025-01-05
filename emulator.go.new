@@ -1,0 +1,307 @@
+/*
+   main,
+   Copyright (C) 2024  Phil Hilger
+
+   This program is free software: you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation, either version 3 of the License, or
+   (at your option) any later version.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+// Package main does ...
+package main
+
+import (
+	"fmt"
+	"log"
+	"os"
+)
+
+type Bits uint8
+
+const (
+	C Bits = 1 << iota
+	Z
+	I
+	D
+	B
+	_
+	V
+	N
+)
+
+func (flag *Bits) Set(value Bits) Bits {
+	*flag |= value
+	return *flag
+}
+
+func (flag *Bits) Clear(value Bits) Bits {
+	*flag &= ^value
+	return *flag
+}
+
+func (flag *Bits) Toggle(value Bits) Bits {
+	*flag ^= value
+	return *flag
+}
+
+func (flag *Bits) Has(value Bits) bool {
+	return *flag&value != 0
+}
+
+func (flag *Bits) Not(value Bits) bool {
+	return *flag&value == 0
+}
+
+const (
+	MemSize   = 1 << 16
+	StackSize = 1 << 12
+)
+
+var (
+	buffer []byte
+	PC     int
+	AC     uint8
+	X      uint8
+	Y      uint8
+	SR     Bits
+	SP     []byte
+
+	on = false
+)
+
+func emulator(filename string, lAddr int, sAddr int) {
+	fmt.Printf("Emulating (%s @ %04x) start @ %04x\n", filename, lAddr, sAddr)
+
+	on := true
+	buffer = make([]byte, MemSize)
+	file, err := os.Open(filename)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if _, err := file.Read(buffer[lAddr:]); err != nil {
+		log.Fatal(err)
+	}
+	PC = sAddr
+	AC = 0
+	X = 0
+	Y = 0
+	SR = 0
+	SP = make([]byte, StackSize)
+
+	for on {
+		command := buffer[PC]
+		log.Printf("%04x: %02x\n", PC, command)
+		PC++
+		switch command {
+		case 0x00: // BRK impl
+			on = false
+		case 0x01: // ORA X,ind
+			ind := buffer[PC]
+			address := getAddress(buffer[ind+X], buffer[ind+X+1])
+			AC |= buffer[address]
+			setFlags(AC)
+			PC++
+		case 0x11: // ORA ind,Y
+			ind := buffer[PC]
+			address := getAddress(buffer[ind], buffer[ind+1]) + int(Y)
+			AC |= buffer[address] + Y
+			setFlags(AC)
+			PC++
+		case 0x21: // AND X,ind
+			ind := buffer[PC]
+			address := getAddress(buffer[ind+X], buffer[ind+X+1])
+			AC &= buffer[address]
+			setFlags(AC)
+			PC++
+		case 0x31: // AND ind,Y
+			ind := buffer[PC]
+			address := getAddress(buffer[ind], buffer[ind+1]) + int(Y)
+			AC &= buffer[address]
+			setFlags(AC)
+			PC++
+		case 0x41: // EOR X,ind
+			ind := buffer[PC]
+			address := getAddress(buffer[ind+X], buffer[ind+X+1])
+			AC ^= buffer[address]
+			setFlags(AC)
+			PC++
+		case 0x51: // EOR ind,Y
+			ind := buffer[PC]
+			address := getAddress(buffer[ind], buffer[ind+1]) + int(Y)
+			AC = buffer[address]
+			setFlags(AC)
+			PC++
+		case 0x61: // ADC X,ind
+			ind := buffer[PC]
+			address := getAddress(buffer[ind+X], buffer[ind+X+1])
+			add := buffer[address]
+			res := AC + add
+			if SR.Has(C) {
+				res++
+			}
+			if (res > 0x7f && AC < 0x80 && add < 0x80) ||
+				(res < 0x80 && AC > 0x7f && add > 0x7f) {
+				SR.Set(V)
+			} else {
+				SR.Clear(V)
+			}
+			setFlags(res)
+			AC = res
+			PC++
+		case 0x71: // ADC ind,Y
+			ind := buffer[PC]
+			address := getAddress(buffer[ind], buffer[ind+1]) + int(Y)
+			AC += buffer[address]
+			PC++
+		case 0x81: // STA X,ind
+			ind := buffer[PC]
+			address := getAddress(buffer[ind+X], buffer[ind+X+1])
+			buffer[address] = AC
+			PC++
+		case 0x91: // STA ind,Y
+			ind := buffer[PC]
+			address := getAddress(buffer[ind], buffer[ind+1]) + int(Y)
+			buffer[address] = AC
+			PC++
+		case 0xa1: // LDA X,ind
+			ind := buffer[PC]
+			address := getAddress(buffer[ind+X], buffer[ind+X+1])
+			AC = buffer[address]
+			PC++
+		case 0xb1: // LDA ind,Y
+			ind := buffer[PC]
+			address := getAddress(buffer[ind], buffer[ind+1]) + int(Y)
+			AC = buffer[address]
+			PC++
+		case 0xc1: // CMP X,ind
+			ind := buffer[PC]
+			address := getAddress(buffer[ind+X], buffer[ind+X+1])
+			AC - buffer[address]
+			PC++
+		case 0xd1: // CMP ind,Y
+			ind := buffer[PC]
+			address := getAddress(buffer[ind], buffer[ind+1]) + int(Y)
+			AC = buffer[address]
+			PC++
+		case 0xc1: // CMP X,ind
+			ind := buffer[PC]
+			address := getAddress(buffer[ind+X], buffer[ind+X+1])
+			AC = buffer[address]
+			PC++
+		case 0xd1: // CMP ind,Y
+			ind := buffer[PC]
+			address := getAddress(buffer[ind], buffer[ind+1]) + int(Y)
+			AC = buffer[address]
+			PC++
+
+		case 0x10: // BPL
+			branchFlagClear(N)
+		case 0x20:
+			call()
+		case 0x30: // BMI
+			branchFlagSet(N)
+		case 0x40:
+			returnFromInterrupt()
+		case 0x50: // BVC
+			branchFlagClear(V)
+		case 0x60:
+			returnFromCall()
+		case 0x70: // BVS
+			branchFlagSet(V)
+		case 0x90: // BCC
+			branchFlagClear(C)
+		case 0xb0: // BCS
+			branchFlagSet(C)
+		case 0xd0: // BNE
+			branchFlagClear(Z)
+		case 0xf0:
+			branchFlagSet(Z)
+			// 		default:
+		}
+	}
+}
+
+func branchFlagClear(flag Bits) {
+	rel := int(int8(buffer[PC+1]))
+	if SR.Not(flag) {
+		PC += rel + 1
+		log.Printf("branch %d to %04x\n", rel, PC)
+	}
+}
+
+func branchFlagSet(flag Bits) {
+	rel := int(int8(buffer[PC+1]))
+	if SR.Has(flag) {
+		PC += rel + 1
+		log.Printf("branch %d to %04x\n", rel, PC)
+	}
+}
+
+func setFlags(v int) {
+	if v > 0xff {
+		SR.Set(C)
+	} else {
+		SR.Clear(C)
+	}
+	v %= 0xff
+	if v == 0 {
+		SR.Set(Z)
+	} else {
+		SR.Clear(Z)
+	}
+	if Bits(v)&N == 0 {
+		SR.Clear(N)
+	} else {
+		SR.Set(N)
+	}
+}
+
+func getAddress(lo uint8, hi uint8) int {
+	return int(lo) + int(hi)<<8
+}
+
+func call() {
+	pushWord(PC + 2)
+	PC = int(buffer[PC]) + int(buffer[PC+1])<<8
+	log.Printf("call %04x\n", PC)
+}
+
+func returnFromInterrupt() {
+	PC = pullWord()
+	SR = Bits(pull())
+}
+
+func returnFromCall() {
+	PC = pullWord()
+}
+
+func pushWord(addr int) {
+	push(byte(addr & 0xff))
+	push(byte(addr >> 8))
+}
+
+func push(b byte) {
+	SP = append(SP, b)
+}
+
+func pullWord() int {
+	return int(pull())<<8 + int(pull())
+}
+
+func pull() (b byte) {
+	if len(SP) == 0 {
+		return 0
+	}
+	b = SP[len(SP)-1]
+	SP = SP[0 : len(SP)-1]
+	return b
+}
